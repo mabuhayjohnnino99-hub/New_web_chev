@@ -1,29 +1,305 @@
-// Bawasan ang bilis ng pag-check
-const MAX_REQUESTS_PER_MINUTE = 5;
-let requestCount = 0;
-let lastResetTime = Date.now();
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CODM Account Checker</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
 
-// I-reset ang counter kada minuto
-setInterval(() => {
-    requestCount = 0;
-    lastResetTime = Date.now();
-}, 60000);
+        body {
+            background-color: #f0f2f5;
+            color: #333;
+            padding: 20px;
+        }
 
-async function checkAccount(username, password) {
-    // I-check kung hindi lalampas sa limit
-    if (requestCount >= MAX_REQUESTS_PER_MINUTE) {
-        return { status: 'error', details: `${username}:${password} - Too many requests. Please wait 1 minute.` };
-    }
-    requestCount++;
+        .warning-banner {
+            background-color: #ffebee;
+            border-left: 4px solid #f44336;
+            color: #b71c1c;
+            padding: 15px;
+            margin-bottom: 30px;
+            border-radius: 4px;
+        }
 
-    try {
-        const response = await fetch('/api/check-account', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+        .warning-banner h3 {
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+        }
+
+        .warning-banner h3 i {
+            margin-right: 8px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #2196f3;
+            margin-bottom: 30px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        h1 i {
+            margin-right: 10px;
+        }
+
+        h2 {
+            color: #424242;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+
+        .upload-section {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .upload-section p {
+            margin-bottom: 15px;
+            color: #666;
+        }
+
+        code {
+            background-color: #f5f5f5;
+            padding: 2px 5px;
+            border-radius: 4px;
+            color: #d32f2f;
+        }
+
+        #file-input {
+            display: block;
+            margin-bottom: 15px;
+            padding: 10px;
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        #start-check-btn {
+            background-color: #2196f3;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        #start-check-btn:disabled {
+            background-color: #90caf9;
+            cursor: not-allowed;
+        }
+
+        #start-check-btn:hover:not(:disabled) {
+            background-color: #1976d2;
+        }
+
+        #loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 16px;
+            display: none;
+        }
+
+        #loading i {
+            margin-right: 8px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #results-section {
+            margin-top: 20px;
+            display: none;
+        }
+
+        .result-item {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .success {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+            border-left: 4px solid #4caf50;
+        }
+
+        .failed {
+            background-color: #ffebee;
+            color: #b71c1c;
+            border-left: 4px solid #f44336;
+        }
+
+        .error {
+            background-color: #fff3e0;
+            color: #e65100;
+            border-left: 4px solid #ff9800;
+        }
+
+        .invalid {
+            background-color: #eceff1;
+            color: #455a64;
+            border-left: 4px solid #90a4ae;
+        }
+
+        .result-item i {
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="warning-banner">
+        <h3><i class="fas fa-exclamation-triangle"></i> FOR YOUR ACCOUNT ONLY!</h3>
+        <p>Use only for your own CODM account or with permission. Unauthorized use is illegal.</p>
+    </div>
+
+    <div class="container">
+        <h1><i class="fas fa-gamepad"></i> CODM Account Checker</h1>
+        
+        <div class="upload-section">
+            <h2>Upload TXT File</h2>
+            <p>Format: <code>username:password</code> (one per line)</p>
+            <input type="file" id="file-input" accept=".txt" required>
+            <button type="button" id="start-check-btn"><i class="fas fa-play"></i> Start Checking</button>
+        </div>
+
+        <div id="loading">
+            <i class="fas fa-spinner"></i> Checking accounts... Please wait...
+        </div>
+
+        <div id="results-section">
+            <h2><i class="fas fa-list-alt"></i> Results</h2>
+            <div id="results"></div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const startCheckBtn = document.getElementById('start-check-btn');
+        const loadingDiv = document.getElementById('loading');
+        const resultsSection = document.getElementById('results-section');
+        const resultsDiv = document.getElementById('results');
+
+        // Limit requests to avoid blocks
+        const MAX_REQUESTS_PER_MINUTE = 5;
+        let requestCount = 0;
+        let lastResetTime = Date.now();
+
+        // Reset counter every minute
+        setInterval(() => {
+            requestCount = 0;
+            lastResetTime = Date.now();
+        }, 60000);
+
+        function readFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = (err) => reject(err);
+                reader.readAsText(file);
+            });
+        }
+
+        async function checkAccount(username, password) {
+            // Check request limit
+            if (requestCount >= MAX_REQUESTS_PER_MINUTE) {
+                return { 
+                    status: 'error', 
+                    details: `${username}:${password} - Too many requests. Please wait 1 minute.` 
+                };
+            }
+            requestCount++;
+
+            try {
+                const response = await fetch('/api/check-account', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                return await response.json();
+            } catch (err) {
+                return { 
+                    status: 'error', 
+                    details: `${username}:${password} - Error: ${err.message}` 
+                };
+            }
+        }
+
+        startCheckBtn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            loadingDiv.style.display = 'block';
+            startCheckBtn.disabled = true;
+            resultsSection.style.display = 'none';
+            resultsDiv.innerHTML = '';
+
+            const content = await readFile(file);
+            const lines = content.split('\n').filter(line => line.trim() !== '');
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.includes(':')) {
+                    resultsDiv.innerHTML += `
+                        <div class="result-item invalid">
+                            <i class="fas fa-question-circle"></i> ${trimmed} - Invalid format (use username:password)
+                        </div>
+                    `;
+                    continue;
+                }
+
+                const [username, password] = trimmed.split(':', 2);
+                const result = await checkAccount(username.trim(), password.trim());
+
+                let icon = '';
+                switch(result.status) {
+                    case 'success': icon = '<i class="fas fa-check-circle"></i>'; break;
+                    case 'failed': icon = '<i class="fas fa-times-circle"></i>'; break;
+                    case 'error': icon = '<i class="fas fa-exclamation-circle"></i>'; break;
+                }
+
+                resultsDiv.innerHTML += `
+                    <div class="result-item ${result.status}">
+                        ${icon} ${result.details.replace(/\n/g, '<br>')}
+                    </div>
+                `;
+            }
+
+            loadingDiv.style.display = 'none';
+            startCheckBtn.disabled = false;
+            resultsSection.style.display = 'block';
         });
-        return await response.json();
-    } catch (err) {
-        return { status: 'error', details: `${username}:${password} - Error: ${err.message}` };
-    }
-}
+
+        fileInput.addEventListener('change', () => {
+            startCheckBtn.disabled = !fileInput.files.length;
+        });
+    </script>
+</body>
+</html>
