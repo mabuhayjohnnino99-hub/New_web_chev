@@ -1,0 +1,29 @@
+// Bawasan ang bilis ng pag-check
+const MAX_REQUESTS_PER_MINUTE = 5;
+let requestCount = 0;
+let lastResetTime = Date.now();
+
+// I-reset ang counter kada minuto
+setInterval(() => {
+    requestCount = 0;
+    lastResetTime = Date.now();
+}, 60000);
+
+async function checkAccount(username, password) {
+    // I-check kung hindi lalampas sa limit
+    if (requestCount >= MAX_REQUESTS_PER_MINUTE) {
+        return { status: 'error', details: `${username}:${password} - Too many requests. Please wait 1 minute.` };
+    }
+    requestCount++;
+
+    try {
+        const response = await fetch('/api/check-account', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        return await response.json();
+    } catch (err) {
+        return { status: 'error', details: `${username}:${password} - Error: ${err.message}` };
+    }
+}
